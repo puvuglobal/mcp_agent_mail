@@ -5981,6 +5981,7 @@ def build_mcp_server() -> FastMCP:
             )
 
         # Check for common recipient mistakes and provide helpful guidance
+        # Skip validation for recipients that already exist as registered agents
         for recipient in to:
             if not isinstance(recipient, str):
                 raise ToolExecutionError(
@@ -5989,14 +5990,24 @@ def build_mcp_server() -> FastMCP:
                     recoverable=True,
                     data={"argument": "to", "invalid_item": repr(recipient)},
                 )
-            mistake = _detect_agent_name_mistake(recipient)
-            if mistake:
-                raise ToolExecutionError(
-                    mistake[0],
-                    f"Invalid recipient '{recipient}': {mistake[1]}",
-                    recoverable=True,
-                    data={"recipient": recipient, "hint": "Use agent names like 'BlueLake', not program/model names"},
+            # If the recipient is a registered agent, skip name-format validation
+            from .db import get_session
+            async with get_session() as check_session:
+                from sqlalchemy import text as sa_text
+                check_result = await check_session.execute(
+                    sa_text("SELECT 1 FROM agents WHERE name = :name AND retired_at IS NULL LIMIT 1"),
+                    {"name": recipient},
                 )
+                is_registered = check_result.scalar() is not None
+            if not is_registered:
+                mistake = _detect_agent_name_mistake(recipient)
+                if mistake:
+                    raise ToolExecutionError(
+                        mistake[0],
+                        f"Invalid recipient '{recipient}': {mistake[1]}",
+                        recoverable=True,
+                        data={"recipient": recipient, "hint": "Use agent names like 'BlueLake', not program/model names"},
+                    )
 
         # Normalize cc/bcc inputs and validate types for friendlier UX
         if isinstance(cc, str):
