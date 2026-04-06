@@ -2953,8 +2953,12 @@ def build_http_app(settings: Settings, server=None) -> FastAPI:
         # ========== Chat View Route ==========
 
         @fastapi_app.get("/mail/{project_slug}/chat", response_class=HTMLResponse)
-        async def mail_chat(project_slug: str, agent: str = "") -> HTMLResponse:
-            """Telegram-style chat view for a project's message threads."""
+        async def mail_chat(project_slug: str, agent: str = "", embed: str = "") -> HTMLResponse:
+            """Telegram-style chat view for a project's message threads.
+
+            When ?embed=true is passed, renders a minimal standalone template
+            without the base.html header/footer chrome -- suitable for iframe embedding.
+            """
             await ensure_schema()
             async with get_session() as session:
                 # Get project
@@ -3099,8 +3103,9 @@ def build_http_app(settings: Settings, server=None) -> FastAPI:
                     for r in all_msg_rows.fetchall()
                 ]
 
+            template_name = "mail_chat_embed.html" if embed.lower() == "true" else "mail_chat.html"
             return await _render(
-                "mail_chat.html",
+                template_name,
                 project={"slug": prow[1], "human_key": prow[2]},
                 agents=agents,
                 threads=threads,
