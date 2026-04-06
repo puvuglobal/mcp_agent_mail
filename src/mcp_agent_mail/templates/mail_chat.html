@@ -1,0 +1,570 @@
+{% extends "base.html" %}
+{% block title %}Chat -- {{ project.display_name or project.human_key }}{% endblock %}
+
+{% block breadcrumbs %}
+<nav class="flex items-center gap-2 text-sm">
+  <a href="/mail" class="text-slate-600 dark:text-slate-400 hover:text-primary-600 dark:hover:text-primary-400 transition-colors flex items-center gap-1">
+    <i data-lucide="home" class="w-3.5 h-3.5"></i>
+    Projects
+  </a>
+  <i data-lucide="chevron-right" class="w-4 h-4 text-slate-400"></i>
+  <a href="/mail/{{ project.slug }}" class="text-slate-600 dark:text-slate-400 hover:text-primary-600 dark:hover:text-primary-400 transition-colors">
+    {{ project.display_name or project.human_key }}
+  </a>
+  <i data-lucide="chevron-right" class="w-4 h-4 text-slate-400"></i>
+  <span class="text-slate-900 dark:text-white font-medium">Chat</span>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div x-data="chatApp()" x-init="init()" class="page-transition" x-cloak>
+
+  <!-- NERVE DAEMON STATUS BAR -->
+  <div class="mb-3 flex items-center justify-between bg-slate-800 dark:bg-slate-950 rounded-xl px-5 py-3 border border-slate-700">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center">
+        <i data-lucide="brain-circuit" class="w-5 h-5 text-white"></i>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="text-white font-semibold text-sm">Nerve Daemon</span>
+          <span x-show="daemon.status === 'running'" class="flex items-center gap-1 text-emerald-400 text-xs">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Active
+          </span>
+          <span x-show="daemon.status !== 'running'" class="flex items-center gap-1 text-red-400 text-xs">
+            <span class="w-2 h-2 rounded-full bg-red-400"></span> Offline
+          </span>
+        </div>
+        <div class="text-slate-400 text-xs">Situation-aware reactive orchestration</div>
+      </div>
+    </div>
+    <div class="flex items-center gap-6 text-xs">
+      <div class="text-center">
+        <div class="text-white font-bold text-base" x-text="daemon.messagesRouted">--</div>
+        <div class="text-slate-500">Routed</div>
+      </div>
+      <div class="text-center">
+        <div class="text-white font-bold text-base" x-text="daemon.agentsRunning">--</div>
+        <div class="text-slate-500">Running</div>
+      </div>
+      <div class="text-center">
+        <div class="text-white font-bold text-base" x-text="daemon.pending">--</div>
+        <div class="text-slate-500">Pending</div>
+      </div>
+      <div class="text-center">
+        <div class="font-bold text-base" :class="daemon.budgetPct > 50 ? 'text-emerald-400' : daemon.budgetPct > 20 ? 'text-amber-400' : 'text-red-400'" x-text="'$' + daemon.budgetLeft">--</div>
+        <div class="text-slate-500">Budget</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="flex h-[calc(100vh-14rem)] bg-white dark:bg-slate-900 rounded-2xl shadow-soft border border-slate-200 dark:border-slate-700 overflow-hidden">
+
+    <!-- LEFT SIDEBAR -->
+    <div class="w-80 flex-shrink-0 border-r border-slate-200 dark:border-slate-700 flex flex-col bg-white dark:bg-slate-800"
+         :class="{ 'hidden md:flex': activeThread }">
+
+      <!-- Sidebar Header -->
+      <div class="p-4 border-b border-slate-200 dark:border-slate-700">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-lg font-bold text-slate-900 dark:text-white">Threads</h2>
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-slate-500 dark:text-slate-400" x-text="filteredThreads.length + ' conversations'"></span>
+          </div>
+        </div>
+
+        <!-- Agent Selector -->
+        <div class="mb-3">
+          <select x-model="selectedAgent"
+                  @change="onAgentChange()"
+                  class="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-white focus:border-primary-500 dark:focus:border-primary-500 focus:ring-1 focus:ring-primary-500">
+            <option value="">All agents</option>
+            {% for a in agents %}
+            <option value="{{ a.name }}" {% if selected_agent == a.name %}selected{% endif %}>{{ a.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Search -->
+        <div class="relative">
+          <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <i data-lucide="search" class="w-4 h-4 text-slate-400"></i>
+          </div>
+          <input type="text"
+                 x-model="searchQuery"
+                 placeholder="Search threads..."
+                 class="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:border-primary-500 dark:focus:border-primary-500 focus:ring-1 focus:ring-primary-500" />
+        </div>
+      </div>
+
+      <!-- Thread List -->
+      <div class="flex-1 overflow-y-auto">
+        <template x-for="thread in filteredThreads" :key="thread.thread_id">
+          <button @click="selectThread(thread)"
+                  :class="{
+                    'bg-primary-50 dark:bg-primary-900/20 border-l-2 border-primary-500': activeThread && activeThread.thread_id === thread.thread_id,
+                    'hover:bg-slate-50 dark:hover:bg-slate-700/50 border-l-2 border-transparent': !activeThread || activeThread.thread_id !== thread.thread_id
+                  }"
+                  class="w-full text-left px-4 py-3 border-b border-slate-100 dark:border-slate-700/50 transition-colors duration-150">
+            <div class="flex items-start gap-3">
+              <!-- Thread icon -->
+              <div class="flex-shrink-0 mt-0.5">
+                <div :class="thread.is_group ? 'bg-primary-100 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'"
+                     class="w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold">
+                  <template x-if="thread.is_group">
+                    <i data-lucide="users" class="w-4 h-4"></i>
+                  </template>
+                  <template x-if="!thread.is_group">
+                    <span x-text="thread.last_sender ? thread.last_sender.charAt(0).toUpperCase() : '#'"></span>
+                  </template>
+                </div>
+              </div>
+
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center justify-between mb-0.5">
+                  <span class="text-sm font-semibold text-slate-900 dark:text-white truncate" x-text="thread.display_name"></span>
+                  <span class="text-xs text-slate-400 dark:text-slate-500 flex-shrink-0 ml-2" x-text="formatRelativeTime(thread.last_ts)"></span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <p class="text-xs text-slate-500 dark:text-slate-400 truncate">
+                    <span class="font-medium" x-text="thread.last_sender ? thread.last_sender + ': ' : ''"></span>
+                    <span x-text="thread.last_subject"></span>
+                  </p>
+                  <template x-if="thread.unread_count > 0">
+                    <span class="flex-shrink-0 ml-2 min-w-[1.25rem] h-5 px-1.5 bg-primary-500 text-white text-xs font-bold rounded-full flex items-center justify-center"
+                          x-text="thread.unread_count > 99 ? '99+' : thread.unread_count"></span>
+                  </template>
+                </div>
+                <div class="flex items-center gap-1 mt-1">
+                  <span class="text-[10px] text-slate-400 dark:text-slate-500" x-text="thread.message_count + ' messages'"></span>
+                  <template x-if="thread.participant_count > 1">
+                    <span class="text-[10px] text-slate-400 dark:text-slate-500" x-text="' -- ' + thread.participant_count + ' participants'"></span>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </button>
+        </template>
+
+        <!-- Empty state -->
+        <template x-if="filteredThreads.length === 0">
+          <div class="flex flex-col items-center justify-center h-full p-8 text-center">
+            <div class="w-16 h-16 bg-slate-100 dark:bg-slate-700 rounded-full flex items-center justify-center mb-4">
+              <i data-lucide="message-square" class="w-8 h-8 text-slate-400"></i>
+            </div>
+            <p class="text-sm text-slate-500 dark:text-slate-400 font-medium">No threads found</p>
+            <p class="text-xs text-slate-400 dark:text-slate-500 mt-1" x-show="searchQuery">Try a different search term</p>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- RIGHT PANEL - Chat area -->
+    <div class="flex-1 flex flex-col min-w-0"
+         :class="{ 'hidden md:flex': !activeThread }">
+
+      <!-- No thread selected -->
+      <template x-if="!activeThread">
+        <div class="flex-1 flex flex-col items-center justify-center text-center p-8">
+          <div class="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-6">
+            <i data-lucide="message-circle" class="w-10 h-10 text-slate-300 dark:text-slate-600"></i>
+          </div>
+          <h3 class="text-xl font-bold text-slate-900 dark:text-white mb-2">Select a conversation</h3>
+          <p class="text-sm text-slate-500 dark:text-slate-400 max-w-sm">
+            Choose a thread from the sidebar to view messages, or search for a specific conversation.
+          </p>
+        </div>
+      </template>
+
+      <!-- Thread selected -->
+      <template x-if="activeThread">
+        <div class="flex flex-col h-full">
+          <!-- Chat Header -->
+          <div class="flex-shrink-0 px-6 py-4 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3 min-w-0">
+                <!-- Back button (mobile) -->
+                <button @click="activeThread = null; activeMessages = []"
+                        class="md:hidden flex-shrink-0 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+                  <i data-lucide="arrow-left" class="w-5 h-5 text-slate-600 dark:text-slate-300"></i>
+                </button>
+
+                <div :class="activeThread.is_group ? 'bg-primary-100 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'"
+                     class="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0">
+                  <template x-if="activeThread.is_group">
+                    <i data-lucide="users" class="w-5 h-5"></i>
+                  </template>
+                  <template x-if="!activeThread.is_group">
+                    <span class="text-sm font-bold" x-text="activeThread.last_sender ? activeThread.last_sender.charAt(0).toUpperCase() : '#'"></span>
+                  </template>
+                </div>
+
+                <div class="min-w-0">
+                  <h3 class="text-base font-bold text-slate-900 dark:text-white truncate" x-text="activeThread.display_name"></h3>
+                  <p class="text-xs text-slate-500 dark:text-slate-400 truncate" x-text="activeThread.participants_text"></p>
+                </div>
+              </div>
+
+              <div class="flex items-center gap-2 flex-shrink-0">
+                <a :href="'/mail/' + projectSlug + '/thread/' + activeThread.thread_id"
+                   class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                   data-tippy-content="View full thread">
+                  <i data-lucide="external-link" class="w-4 h-4 text-slate-500 dark:text-slate-400"></i>
+                </a>
+                <span class="text-xs text-slate-400 dark:text-slate-500 font-mono" x-text="activeMessages.length + ' msgs'"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Messages Area -->
+          <div class="flex-1 overflow-y-auto px-6 py-4 space-y-1" id="messages-container" x-ref="messagesContainer">
+            <template x-for="(msg, index) in activeMessages" :key="msg.id">
+              <div>
+                <!-- Date separator -->
+                <template x-if="index === 0 || !isSameDay(msg.created, activeMessages[index - 1].created)">
+                  <div class="flex items-center justify-center my-4">
+                    <div class="px-3 py-1 bg-slate-100 dark:bg-slate-700 rounded-full">
+                      <span class="text-xs font-medium text-slate-500 dark:text-slate-400" x-text="formatDateSeparator(msg.created)"></span>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- Message bubble -->
+                <div class="flex mb-3"
+                     :class="isOwnMessage(msg) ? 'justify-end' : 'justify-start'">
+                  <div class="flex gap-2 max-w-[75%]"
+                       :class="isOwnMessage(msg) ? 'flex-row-reverse' : 'flex-row'">
+
+                    <!-- Avatar (only show if different sender from previous message) -->
+                    <template x-if="!isOwnMessage(msg) && (index === 0 || activeMessages[index - 1].sender !== msg.sender || !isSameDay(msg.created, activeMessages[index - 1].created))">
+                      <div class="flex-shrink-0 mt-1">
+                        <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold"
+                             :style="'background-color: ' + getAgentColor(msg.sender) + '20; color: ' + getAgentColor(msg.sender)">
+                          <span x-text="msg.sender.charAt(0).toUpperCase()"></span>
+                        </div>
+                      </div>
+                    </template>
+                    <template x-if="isOwnMessage(msg) || (index > 0 && activeMessages[index - 1].sender === msg.sender && isSameDay(msg.created, activeMessages[index - 1].created))">
+                      <div class="w-8 flex-shrink-0"></div>
+                    </template>
+
+                    <!-- Message content -->
+                    <div>
+                      <!-- Sender name (only if new sender or new day) -->
+                      <template x-if="!isOwnMessage(msg) && (index === 0 || activeMessages[index - 1].sender !== msg.sender || !isSameDay(msg.created, activeMessages[index - 1].created))">
+                        <p class="text-xs font-semibold mb-1 px-1"
+                           :style="'color: ' + getAgentColor(msg.sender)"
+                           x-text="msg.sender"></p>
+                      </template>
+
+                      <div :class="isOwnMessage(msg)
+                              ? 'bg-primary-600 text-white rounded-2xl rounded-br-md'
+                              : 'bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-white rounded-2xl rounded-bl-md'"
+                           class="px-4 py-2.5 shadow-sm">
+
+                        <!-- Subject line (if present and different from thread) -->
+                        <template x-if="msg.subject && msg.subject !== activeThread.display_name">
+                          <p class="text-xs font-bold mb-1 opacity-80" x-text="msg.subject"></p>
+                        </template>
+
+                        <!-- Importance badge -->
+                        <template x-if="msg.importance === 'high' || msg.importance === 'urgent'">
+                          <span :class="isOwnMessage(msg) ? 'bg-white/20 text-white' : 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400'"
+                                class="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded mb-1"
+                                x-text="msg.importance.toUpperCase()"></span>
+                        </template>
+
+                        <!-- Message body (rendered markdown) -->
+                        <div class="text-sm leading-relaxed prose-sm break-words"
+                             :class="isOwnMessage(msg) ? 'prose-invert' : 'prose dark:prose-invert'"
+                             x-html="renderMarkdown(msg.body_md)"></div>
+
+                        <!-- Timestamp -->
+                        <p class="text-[10px] mt-1 text-right"
+                           :class="isOwnMessage(msg) ? 'text-white/60' : 'text-slate-400 dark:text-slate-500'"
+                           x-text="formatMessageTime(msg.created)"></p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <!-- Loading state -->
+            <template x-if="loadingMessages">
+              <div class="flex items-center justify-center py-8">
+                <div class="flex items-center gap-2 text-slate-400">
+                  <div class="loading-dot w-2 h-2 bg-slate-400 rounded-full"></div>
+                  <div class="loading-dot w-2 h-2 bg-slate-400 rounded-full"></div>
+                  <div class="loading-dot w-2 h-2 bg-slate-400 rounded-full"></div>
+                </div>
+              </div>
+            </template>
+
+            <!-- Empty messages -->
+            <template x-if="!loadingMessages && activeMessages.length === 0">
+              <div class="flex flex-col items-center justify-center h-full text-center">
+                <p class="text-sm text-slate-500 dark:text-slate-400">No messages in this thread</p>
+              </div>
+            </template>
+          </div>
+
+          <!-- Compose Area (non-functional UI) -->
+          <div class="flex-shrink-0 px-6 py-4 border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+            <div class="flex items-end gap-3">
+              <div class="flex-1 relative">
+                <textarea rows="1"
+                          placeholder="Type a message... (read-only view)"
+                          disabled
+                          class="w-full px-4 py-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-400 dark:text-slate-500 placeholder-slate-400 dark:placeholder-slate-500 resize-none cursor-not-allowed"></textarea>
+              </div>
+              <button disabled
+                      class="flex-shrink-0 p-3 bg-slate-200 dark:bg-slate-700 rounded-xl cursor-not-allowed">
+                <i data-lucide="send" class="w-5 h-5 text-slate-400 dark:text-slate-500"></i>
+              </button>
+            </div>
+            <p class="text-[10px] text-slate-400 dark:text-slate-500 mt-2 text-center">
+              Read-only view. Use the Human Overseer to send messages.
+            </p>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
+
+<script>
+  function chatApp() {
+    // Data passed from server
+    const allThreads = {{ threads | tojson }};
+    const allMessages = {{ all_messages | tojson }};
+    const agents = {{ agents | tojson }};
+    const projectSlug = {{ project.slug | tojson }};
+    const initialAgent = {{ selected_agent | tojson }};
+
+    // Agent color palette for avatars
+    const agentColors = {};
+    const colorPalette = [
+      '#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f59e0b',
+      '#10b981', '#06b6d4', '#3b82f6', '#f97316', '#84cc16',
+      '#14b8a6', '#a855f7', '#e11d48', '#0891b2', '#65a30d'
+    ];
+
+    return {
+      searchQuery: '',
+      selectedAgent: initialAgent || '',
+      activeThread: null,
+      activeMessages: [],
+      loadingMessages: false,
+      projectSlug: projectSlug,
+
+      // Nerve Daemon status
+      daemon: {
+        status: 'checking',
+        messagesRouted: '--',
+        agentsRunning: '--',
+        pending: '--',
+        budgetLeft: '--',
+        budgetPct: 100,
+      },
+
+      init() {
+        // Assign colors to agents
+        agents.forEach((a, i) => {
+          agentColors[a.name] = colorPalette[i % colorPalette.length];
+        });
+
+        // Extend dayjs
+        if (window.dayjs) {
+          dayjs.extend(dayjs_plugin_relativeTime);
+          dayjs.extend(dayjs_plugin_calendar);
+        }
+
+        // Auto-select first thread if URL hash present
+        const hash = window.location.hash.replace('#', '');
+        if (hash) {
+          const found = allThreads.find(t => t.thread_id === hash);
+          if (found) {
+            this.$nextTick(() => this.selectThread(found));
+          }
+        }
+
+        // Re-init lucide icons after Alpine renders
+        this.$nextTick(() => {
+          if (window.lucide) lucide.createIcons();
+        });
+
+        // Poll daemon status + refresh messages every 5s
+        this.pollDaemon();
+        setInterval(() => this.pollDaemon(), 5000);
+        setInterval(() => this.refreshMessages(), 10000);
+      },
+
+      async pollDaemon() {
+        try {
+          // Check Paperclip for running agents
+          const resp = await fetch('http://localhost:3100/api/companies/f3f874b9-2e8e-4c62-ab03-f562a83b7bac/agents');
+          if (resp.ok) {
+            const agents = await resp.json();
+            const agentList = Array.isArray(agents) ? agents : (agents.agents || []);
+            const running = agentList.filter(a => a.status === 'running');
+            this.daemon.agentsRunning = running.length;
+            this.daemon.status = 'running';
+
+            // Calculate total budget
+            let totalBudget = 0;
+            let totalSpent = 0;
+            agentList.forEach(a => {
+              totalBudget += (a.budgetMonthlyCents || 0);
+              totalSpent += (a.spentMonthlyCents || 0);
+            });
+            const dailyBudget = 1500; // $15/day in cents
+            this.daemon.budgetLeft = (dailyBudget / 100).toFixed(2);
+            this.daemon.budgetPct = 100;
+          } else {
+            this.daemon.status = 'offline';
+          }
+
+          // Count messages routed (total in DB)
+          const mailResp = await fetch('/mail/api/unified-inbox?limit=1');
+          if (mailResp.ok) {
+            const mailData = await mailResp.json();
+            this.daemon.messagesRouted = mailData.total_messages || allMessages.length;
+          }
+
+          this.daemon.pending = 0; // Will integrate with daemon API later
+        } catch (e) {
+          this.daemon.status = 'offline';
+        }
+      },
+
+      async refreshMessages() {
+        // Reload the page data silently to pick up new messages
+        try {
+          const agent = this.selectedAgent ? '?agent=' + encodeURIComponent(this.selectedAgent) : '';
+          const resp = await fetch('/mail/' + this.projectSlug + '/chat' + agent, {
+            headers: { 'Accept': 'text/html' }
+          });
+          // For now, just refresh thread list on next full page load
+          // Full AJAX refresh requires a JSON API endpoint (future improvement)
+        } catch (e) {
+          // Silent fail
+        }
+      },
+
+      get filteredThreads() {
+        let threads = allThreads;
+
+        // Filter by search
+        if (this.searchQuery.trim()) {
+          const q = this.searchQuery.toLowerCase();
+          threads = threads.filter(t =>
+            (t.display_name || '').toLowerCase().includes(q) ||
+            (t.last_subject || '').toLowerCase().includes(q) ||
+            (t.last_sender || '').toLowerCase().includes(q) ||
+            (t.thread_id || '').toLowerCase().includes(q)
+          );
+        }
+
+        return threads;
+      },
+
+      selectThread(thread) {
+        this.activeThread = thread;
+        this.loadingMessages = true;
+        window.location.hash = thread.thread_id;
+
+        // Get messages for this thread from preloaded data
+        this.$nextTick(() => {
+          this.activeMessages = allMessages.filter(m =>
+            m.thread_id === thread.thread_id
+          ).sort((a, b) => {
+            return new Date(a.created).getTime() - new Date(b.created).getTime();
+          });
+          this.loadingMessages = false;
+
+          // Scroll to bottom
+          this.$nextTick(() => {
+            this.scrollToBottom();
+            if (window.lucide) lucide.createIcons();
+          });
+        });
+      },
+
+      scrollToBottom() {
+        const container = this.$refs.messagesContainer;
+        if (container) {
+          container.scrollTop = container.scrollHeight;
+        }
+      },
+
+      onAgentChange() {
+        // Navigate to filtered URL
+        const base = '/mail/' + this.projectSlug + '/chat';
+        if (this.selectedAgent) {
+          window.location.href = base + '?agent=' + encodeURIComponent(this.selectedAgent);
+        } else {
+          window.location.href = base;
+        }
+      },
+
+      isOwnMessage(msg) {
+        return this.selectedAgent && msg.sender === this.selectedAgent;
+      },
+
+      getAgentColor(name) {
+        return agentColors[name] || '#6366f1';
+      },
+
+      formatRelativeTime(ts) {
+        if (!ts || !window.dayjs) return '';
+        const d = dayjs(ts);
+        const now = dayjs();
+        const diffDays = now.diff(d, 'day');
+        if (diffDays === 0) {
+          return d.format('HH:mm');
+        } else if (diffDays === 1) {
+          return 'Yesterday';
+        } else if (diffDays < 7) {
+          return d.format('ddd');
+        } else {
+          return d.format('MMM D');
+        }
+      },
+
+      formatMessageTime(ts) {
+        if (!ts || !window.dayjs) return '';
+        return dayjs(ts).format('HH:mm');
+      },
+
+      formatDateSeparator(ts) {
+        if (!ts || !window.dayjs) return '';
+        const d = dayjs(ts);
+        const now = dayjs();
+        const diffDays = now.diff(d, 'day');
+        if (diffDays === 0) return 'Today';
+        if (diffDays === 1) return 'Yesterday';
+        return d.format('MMMM D, YYYY');
+      },
+
+      isSameDay(ts1, ts2) {
+        if (!ts1 || !ts2 || !window.dayjs) return false;
+        return dayjs(ts1).format('YYYY-MM-DD') === dayjs(ts2).format('YYYY-MM-DD');
+      },
+
+      renderMarkdown(md) {
+        if (!md) return '';
+        try {
+          const html = marked.parse(md, { breaks: true, gfm: true });
+          return DOMPurify.sanitize(html);
+        } catch (e) {
+          // Fallback to escaped text
+          const div = document.createElement('div');
+          div.textContent = md;
+          return div.innerHTML;
+        }
+      }
+    };
+  }
+</script>
+{% endblock %}

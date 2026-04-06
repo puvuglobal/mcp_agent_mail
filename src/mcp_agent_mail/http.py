@@ -2950,6 +2950,164 @@ def build_http_app(settings: Settings, server=None) -> FastAPI:
                     items.append({"id": r[0], "subject": r[1], "created": str(r[2]), "attachments": attachments})
             return await _render("mail_attachments.html", project={"slug": prow[1], "human_key": prow[2]}, items=items)
 
+        # ========== Chat View Route ==========
+
+        @fastapi_app.get("/mail/{project_slug}/chat", response_class=HTMLResponse)
+        async def mail_chat(project_slug: str, agent: str = "") -> HTMLResponse:
+            """Telegram-style chat view for a project's message threads."""
+            await ensure_schema()
+            async with get_session() as session:
+                # Get project
+                prow = (
+                    await session.execute(
+                        text("SELECT id, slug, human_key FROM projects WHERE slug = :k OR human_key = :k"),
+                        {"k": project_slug},
+                    )
+                ).fetchone()
+                if not prow:
+                    return await _render("error.html", message="Project not found")
+
+                pid = int(prow[0])
+
+                # Get all agents for this project
+                agent_rows = await session.execute(
+                    text("SELECT id, name FROM agents WHERE project_id = :pid ORDER BY name"),
+                    {"pid": pid},
+                )
+                agents = [{"id": r[0], "name": r[1]} for r in agent_rows.fetchall()]
+                agent_id_map = {a["name"]: a["id"] for a in agents}
+
+                # Determine selected agent
+                selected_agent = ""
+                selected_agent_id = None
+                if agent and agent in agent_id_map:
+                    selected_agent = agent
+                    selected_agent_id = agent_id_map[agent]
+
+                # Get all distinct threads with summary info
+                thread_rows = await session.execute(
+                    text("""
+                        SELECT
+                            m.thread_id,
+                            MAX(m.created_ts) AS last_ts,
+                            COUNT(*) AS message_count
+                        FROM messages m
+                        WHERE m.project_id = :pid
+                          AND m.thread_id IS NOT NULL
+                          AND m.thread_id != ''
+                        GROUP BY m.thread_id
+                        ORDER BY last_ts DESC
+                    """),
+                    {"pid": pid},
+                )
+                raw_threads = thread_rows.fetchall()
+
+                threads = []
+                for t in raw_threads:
+                    tid = t[0]
+                    last_ts = str(t[1]) if t[1] else ""
+                    msg_count = t[2]
+
+                    # Get the latest message in this thread for preview
+                    latest = (
+                        await session.execute(
+                            text("""
+                                SELECT m.subject, s.name
+                                FROM messages m
+                                JOIN agents s ON s.id = m.sender_id
+                                WHERE m.project_id = :pid AND m.thread_id = :tid
+                                ORDER BY m.created_ts DESC
+                                LIMIT 1
+                            """),
+                            {"pid": pid, "tid": tid},
+                        )
+                    ).fetchone()
+                    last_subject = latest[0] if latest else ""
+                    last_sender = latest[1] if latest else ""
+
+                    # Get unique participants in this thread
+                    participants_rows = await session.execute(
+                        text("""
+                            SELECT DISTINCT s.name
+                            FROM messages m
+                            JOIN agents s ON s.id = m.sender_id
+                            WHERE m.project_id = :pid AND m.thread_id = :tid
+                            ORDER BY s.name
+                        """),
+                        {"pid": pid, "tid": tid},
+                    )
+                    participants = [r[0] for r in participants_rows.fetchall()]
+
+                    # Count unread for selected agent
+                    unread_count = 0
+                    if selected_agent_id:
+                        unread_row = (
+                            await session.execute(
+                                text("""
+                                    SELECT COUNT(*)
+                                    FROM messages m
+                                    JOIN message_recipients mr ON mr.message_id = m.id
+                                    WHERE m.project_id = :pid
+                                      AND m.thread_id = :tid
+                                      AND mr.agent_id = :aid
+                                      AND mr.read_ts IS NULL
+                                """),
+                                {"pid": pid, "tid": tid, "aid": selected_agent_id},
+                            )
+                        ).fetchone()
+                        unread_count = unread_row[0] if unread_row else 0
+
+                    # Determine if this looks like a group channel
+                    is_group = len(participants) > 2 or "-" in str(tid)
+
+                    threads.append({
+                        "thread_id": str(tid),
+                        "display_name": str(tid),
+                        "last_ts": last_ts,
+                        "last_subject": last_subject or "(no subject)",
+                        "last_sender": last_sender,
+                        "message_count": msg_count,
+                        "participant_count": len(participants),
+                        "participants_text": ", ".join(participants),
+                        "unread_count": unread_count,
+                        "is_group": is_group,
+                    })
+
+                # Get ALL messages for ALL threads (for client-side rendering)
+                all_msg_rows = await session.execute(
+                    text("""
+                        SELECT m.id, m.subject, m.body_md, s.name, m.created_ts, m.importance, m.thread_id
+                        FROM messages m
+                        JOIN agents s ON s.id = m.sender_id
+                        WHERE m.project_id = :pid
+                          AND m.thread_id IS NOT NULL
+                          AND m.thread_id != ''
+                        ORDER BY m.created_ts ASC
+                    """),
+                    {"pid": pid},
+                )
+                all_messages = [
+                    {
+                        "id": r[0],
+                        "subject": r[1] or "",
+                        "body_md": r[2] or "",
+                        "sender": r[3],
+                        "created": str(r[4]),
+                        "importance": r[5] or "normal",
+                        "thread_id": str(r[6]),
+                    }
+                    for r in all_msg_rows.fetchall()
+                ]
+
+            return await _render(
+                "mail_chat.html",
+                project={"slug": prow[1], "human_key": prow[2]},
+                agents=agents,
+                threads=threads,
+                all_messages=all_messages,
+                selected_agent=selected_agent,
+            )
+
         # ========== Human Overseer Routes ==========
 
         @fastapi_app.get("/mail/{project}/overseer/compose", response_class=HTMLResponse)
