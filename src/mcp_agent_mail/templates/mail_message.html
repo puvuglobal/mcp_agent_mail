@@ -9,7 +9,7 @@
   </a>
   <i data-lucide="chevron-right" class="w-4 h-4 text-slate-400"></i>
   <a href="/mail/{{ project.slug }}" class="text-slate-600 dark:text-slate-400 hover:text-primary-600 dark:hover:text-primary-400 transition-colors">
-    {{ project.human_key }}
+    {{ project.display_name or project.human_key }}
   </a>
   <i data-lucide="chevron-right" class="w-4 h-4 text-slate-400"></i>
   <span class="text-slate-900 dark:text-white font-medium truncate max-w-xs">{{ message.subject }}</span>

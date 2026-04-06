@@ -189,7 +189,7 @@
 
           <!-- Project Name -->
           <h3 class="relative text-xl font-bold text-slate-900 dark:text-white mb-3 group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors line-clamp-2 min-h-[3.5rem]">
-            {{ p.human_key }}
+            {{ p.display_name or p.human_key }}
           </h3>
 
           <!-- Project Meta -->
@@ -438,7 +438,7 @@
 
               <!-- Project Name -->
               <h3 class="relative text-xl font-bold text-slate-500 dark:text-slate-400 mb-3 line-clamp-2 min-h-[3.5rem]">
-                {{ p.human_key }}
+                {{ p.display_name or p.human_key }}
               </h3>
 
               <!-- Project Meta -->

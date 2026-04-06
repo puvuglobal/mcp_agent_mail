@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}{{ project.human_key }} — Agent Mail{% endblock %}
+{% block title %}{{ project.display_name or project.human_key }} — Agent Mail{% endblock %}
 
 {% block breadcrumbs %}
 <nav class="flex items-center gap-2 text-sm">
@@ -9,7 +9,7 @@
     Projects
   </a>
   <i data-lucide="chevron-right" class="w-4 h-4 text-slate-400"></i>
-  <span class="text-slate-900 dark:text-white font-medium">{{ project.human_key }}</span>
+  <span class="text-slate-900 dark:text-white font-medium">{{ project.display_name or project.human_key }}</span>
 </nav>
 {% endblock %}
 
@@ -61,7 +61,7 @@
           </div>
           <div>
             <h1 class="text-4xl font-bold text-slate-900 dark:text-white mb-2">
-              {{ project.human_key }}
+              {{ project.display_name or project.human_key }}
             </h1>
             <div class="flex items-center gap-3 text-sm">
               <div class="flex items-center gap-1.5 text-slate-600 dark:text-slate-400">
@@ -123,7 +123,7 @@
               </div>
             </div>
             <p class="text-slate-600 dark:text-slate-400 mb-6">
-              Archiving <strong class="text-slate-900 dark:text-white">{{ project.human_key }}</strong> will hide it from active project lists.
+              Archiving <strong class="text-slate-900 dark:text-white">{{ project.display_name or project.human_key }}</strong> will hide it from active project lists.
               All messages will be preserved and the project can be restored at any time.
             </p>
             <div class="flex items-center justify-end gap-3">
@@ -425,7 +425,8 @@
                       aria-label="Copy agent name">
                 <i data-lucide="copy" class="w-4 h-4"></i>
               </button>
-              <button onclick="if(confirm('Retire agent ' + {{ a.name | tojson }} + '? It will stop accepting new messages but message history is preserved.')) fetch('/mail/api/retire-agent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({agent_id:{{ a.id }}})}).then(r=>r.json()).then(d=>{if(d.success) location.reload()})"
+              <button data-agent-id="{{ a.id }}" data-retire-name="{{ a.name }}"
+                      onclick="var n=this.dataset.retireName;var i=this.dataset.agentId;if(confirm('Retire agent '+n+'?'))fetch('/mail/api/retire-agent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({agent_id:parseInt(i)})}).then(function(r){return r.json()}).then(function(d){if(d.success)location.reload()})"
                       class="p-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-amber-100 dark:hover:bg-amber-900/30 text-slate-700 dark:text-slate-300 hover:text-amber-700 dark:hover:text-amber-400 rounded-lg transition-all duration-200 shadow-sm hover:shadow-md"
                       data-tippy-content="Retire agent"
                       aria-label="Retire agent">
