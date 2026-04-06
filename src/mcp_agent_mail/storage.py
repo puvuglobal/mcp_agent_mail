@@ -828,13 +828,15 @@ class AsyncFileLock:
                 # - First attempt: 10% of total (fast path)
                 # - Middle attempts: progressively longer
                 # - Last attempt: all remaining time
+                # Windows needs longer backoff due to slower file handle release
+                _base_backoff = 1.0 if sys.platform == "win32" else 0.5
                 if attempt == 0:
                     per_attempt_timeout = min(total_timeout * 0.1, 5.0)  # 10%, max 5s
                 elif attempt == self._max_retries:
                     per_attempt_timeout = remaining  # Use all remaining
                 else:
-                    # Exponential growth: 0.5s, 1s, 2s, 4s, ...
-                    per_attempt_timeout = min(0.5 * (2 ** attempt), remaining)
+                    # Exponential growth: Windows 1s,2s,4s,8s; Unix 0.5s,1s,2s,4s
+                    per_attempt_timeout = min(_base_backoff * (2 ** attempt), remaining)
 
                 try:
                     if self._timeout <= 0:
@@ -1019,9 +1021,11 @@ class AsyncFileLock:
                 # Last resort: ensure FD is closed even if everything above failed
                 await _to_thread(self._force_close_fd)
 
-            # Step 2: Windows needs a short delay after close before unlink
+            # Step 2: Windows needs a longer delay after close before unlink.
+            # Windows file handles don't release as fast as Unix. 10ms is insufficient
+            # and causes lock contention when multiple agents send messages.
             if sys.platform == "win32":
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0.15)
 
             # Step 3: Clean up metadata file.  The lock file itself is already
             # unlinked by SoftFileLock._release(); we only need to remove the

@@ -4559,15 +4559,26 @@ def build_mcp_server() -> FastMCP:
                 result_snapshot,
                 frontmatter.get("created"),
             )
-            await write_message_bundle(
-                archive,
-                frontmatter,
-                processed_body,
-                sender.name,
-                recipients_for_archive,
-                attachment_files,
-                commit_panel_text,
-            )
+            # Git archive write -- non-fatal on Windows.
+            # The SQLite write (_create_message above) already committed.
+            # If the Git write fails due to lock contention, the message is
+            # still persisted in the database. The Git archive will catch up
+            # on the next successful write.
+            try:
+                await write_message_bundle(
+                    archive,
+                    frontmatter,
+                    processed_body,
+                    sender.name,
+                    recipients_for_archive,
+                    attachment_files,
+                    commit_panel_text,
+                )
+            except Exception as _git_err:
+                import logging as _logging
+                _logging.getLogger("mcp_agent_mail.app").warning(
+                    "Git archive write failed (message persisted to DB): %s", _git_err
+                )
 
             # Emit notification signals for recipients (if enabled)
             if settings.notifications.enabled:
